@@ -15,15 +15,15 @@ CREATE TABLE bufferpool
   nro_frame INT,
   free BOOLEAN,
   dirty BOOLEAN,
-  nro_disk_page	INT,
+  nro_disk_page INT,
   last_touch TIMESTAMP
 );
 
 INSERT INTO bufferpool (nro_frame, free, dirty, nro_disk_page, last_touch)
-VALUES	(1,FALSE,FALSE,1,NULL),
-        (2,FALSE,FALSE,2,NULL),
-        (2,FALSE,FALSE,3,NULL),
-        (2,FALSE,FALSE,4,NULL);
+VALUES	(1,FALSE,FALSE,NULL,NULL),
+        (2,FALSE,FALSE,NULL,NULL),
+        (2,FALSE,FALSE,NULL,NULL),
+        (2,FALSE,FALSE,NULL,NULL);
 
 
 ----------------------------------------------------------------------------------------
@@ -31,18 +31,48 @@ CREATE OR REPLACE FUNCTION get_disk_page (nro_page INTEGER)
   RETURNS INTEGER AS
 $BODY$
 DECLARE
-  contador INTEGER := 0 ;
-  resultado REAL := _numero;
-
+  resultado INTEGER;
+  pFrame INTEGER;
+  
 BEGIN
 
 	RAISE NOTICE 'Se invoca get_disk_page(%)', _nro_page;
 
-  LOOP
-  EXIT WHEN contador = _cantidad ;
-    contador := contador + 1 ;
-    resultado := resultado + (resultado * _porcentaje / 100);
-  END LOOP ;
+	IF EXISTS (SELECT FROM bufferpool WHERE nro_disk_page = nro_page) 
+	THEN
+	  SELECT nro_frame
+	  INTO resultado
+	  FROM bufferpool
+	  WHERE nro_disk_page = nro_page;
+	  
+	  RAISE NOTICE 'Acceso a bufferpool. Frame %', resultado;
+	ELSE
+	
+	  -- Busco un frame libre
+	  SELECT nro_frame
+	  INTO resultado
+	  FROM bufferpool 
+	  WHERE free = TRUE
+	  ORDER BY last_touch
+	  LIMIT 1;
+	  
+	  IF(resultado IS NULL)
+	  THEN
+	    -- Si no hay frame libre, desalojo segun algoritmo
+	    pick_frame_LRU();
+	    -- Si dirty = true, hay que hacer un update en disco (write_pag_to_disk()) 
+	    -- antes de pisar el bloque 
+	    RAISE NOTICE 'Acceso a disco con reemplazo. Frame %', resultado;
+	  ELSE
+	    RAISE NOTICE 'Acceso a disco sin reemplazo. Frame %', resultado;
+	  END IF;
+	  
+	  UPDATE bufferpool
+	  SET free = FALSE,
+	    last_touch = current_timestamp
+	  WHERE nro_frame = resultado;
+	  
+	END IF;
 
 	RETURN resultado;
 
