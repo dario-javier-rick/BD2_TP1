@@ -22,10 +22,61 @@ CREATE TABLE bufferpool
 INSERT INTO bufferpool (nro_frame, free, dirty, nro_disk_page, last_touch)
 VALUES	(1,FALSE,FALSE,NULL,NULL),
         (2,FALSE,FALSE,NULL,NULL),
-        (2,FALSE,FALSE,NULL,NULL),
-        (2,FALSE,FALSE,NULL,NULL);
+        (3,FALSE,FALSE,NULL,NULL),
+        (4,FALSE,FALSE,NULL,NULL);
 
+SELECT * FROM bufferpool;
+----------------------------------------------------------------------------------------
 
+DROP FUNCTION IF EXISTS pick_frame_MRU();
+
+CREATE OR REPLACE FUNCTION pick_frame_MRU()
+	RETURNS INT AS
+$BODY$
+DECLARE
+	resultado INTEGER;
+BEGIN
+
+	SELECT nro_frame
+	INTO resultado
+	FROM bufferpool
+	ORDER BY last_touch DESC
+	LIMIT 1 OFFSET 0;
+
+	RETURN resultado;
+
+END;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
+  COST 100;
+
+-- select pick_frame_MRU();
+
+----------------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS pick_frame_LRU();
+
+CREATE OR REPLACE FUNCTION pick_frame_LRU()
+	RETURNS INT AS
+$BODY$
+DECLARE
+	resultado INTEGER;
+BEGIN
+
+	SELECT nro_frame
+	INTO resultado
+	FROM bufferpool
+	ORDER BY last_touch ASC
+	LIMIT 1 OFFSET 0;
+
+	RETURN resultado;
+
+END;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
+  COST 100;
+
+-- select pick_frame_LRU();
 ----------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_disk_page (nro_page INTEGER)
   RETURNS INTEGER AS
@@ -59,8 +110,11 @@ BEGIN
 	  IF(resultado IS NULL)
 	  THEN
 	    -- Si no hay frame libre, desalojo segun algoritmo
-	    pick_frame_LRU();
-	    -- Si dirty = true, hay que hacer un update en disco (write_pag_to_disk()) 
+			SELECT *
+			INTO pFrame
+			FROM pick_frame_LRU();
+
+	    -- Si dirty = true, hay que hacer un update en disco (write_pag_to_disk())
 	    -- antes de pisar el bloque 
 	    RAISE NOTICE 'Acceso a disco con reemplazo. Frame %', resultado;
 	  ELSE
