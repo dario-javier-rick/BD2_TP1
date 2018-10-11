@@ -26,6 +26,20 @@ VALUES	(1,FALSE,FALSE,NULL,NULL),
         (4,FALSE,FALSE,NULL,NULL);
 
 SELECT * FROM bufferpool;
+
+CREATE TABLE param_parametros
+(
+  param_codigo VARCHAR(30),
+  param_valor1 INT
+)
+
+INSERT INTO param_parametros (param_codigo, param_valor1)
+VALUES	('ULTIMO_NRO_PAGINA',null),
+	('CANT_SOLIC_SECUENCIALES',0),
+        ('CANT_SOLIC_SECUENCIALES_MAX',5);
+	
+SELECT * FROM param_parametros;
+
 ----------------------------------------------------------------------------------------
 
 DROP FUNCTION IF EXISTS pick_frame_MRU();
@@ -78,6 +92,56 @@ $BODY$
 
 -- select pick_frame_LRU();
 ----------------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS pick_frame_139();
+
+CREATE OR REPLACE FUNCTION pick_frame_139()
+	RETURNS INT AS
+$BODY$
+DECLARE
+	ultNroPaginaSolicitado INTEGER;
+	nSecuencial INTEGER;
+	nSecuencialMax INTEGER;
+	resultado INTEGER;
+BEGIN
+
+/*
+Debe retornar el numero de frame que se debe desalojar segun LRU, pero antes de cada solicitud se debe verificar
+si las ultimas N solicitudes fueron secuenciales (nros de pagina contiguos). Si hubo N secuenciales, debe retornar
+el numero de frame segun MRU, y poner en cero el contador de secuenciales. N es un porcentaje de la cantidad de 
+buffers en el pool (por ejemplo N=50%)
+*/
+	SELECT param_valor1
+	INTO nSecuencialMax
+	FROM param_parametros
+	WHERE param_codigo = 'ULTIMO_NRO_PAGINA';
+
+	SELECT param_valor1
+	INTO nSecuencial
+	FROM param_parametros
+	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES';
+
+	SELECT param_valor1
+	INTO nSecuencialMax
+	FROM param_parametros
+	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES_MAX';
+
+	//TODO...
+
+	SELECT *
+	INTO resultado
+	FROM pick_frame_LRU();	
+	
+	RETURN resultado;
+
+END;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
+  COST 100;
+
+-- select pick_frame_139();
+----------------------------------------------------------------------------------------
+
 CREATE OR REPLACE FUNCTION get_disk_page (nro_page INTEGER)
   RETURNS INTEGER AS
 $BODY$
