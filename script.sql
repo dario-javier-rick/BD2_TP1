@@ -19,11 +19,12 @@ CREATE TABLE bufferpool
   last_touch TIMESTAMP
 );
 
+-- Todos los frames del buffer estan libres al inicio
 INSERT INTO bufferpool (nro_frame, free, dirty, nro_disk_page, last_touch)
-VALUES	(1,FALSE,FALSE,NULL,NULL),
-        (2,FALSE,FALSE,NULL,NULL),
-        (3,FALSE,FALSE,NULL,NULL),
-        (4,FALSE,FALSE,NULL,NULL);
+VALUES	(1,TRUE,FALSE,NULL,NULL),
+        (2,TRUE,FALSE,NULL,NULL),
+        (3,TRUE,FALSE,NULL,NULL),
+        (4,TRUE,FALSE,NULL,NULL);
 
 SELECT * FROM bufferpool;
 
@@ -31,11 +32,11 @@ CREATE TABLE param_parametros
 (
   param_codigo VARCHAR(30),
   param_valor1 INT
-)
+);
 
 INSERT INTO param_parametros (param_codigo, param_valor1)
 VALUES	('ULTIMO_NRO_PAGINA',null),
-	('CANT_SOLIC_SECUENCIALES',0),
+        ('CANT_SOLIC_SECUENCIALES',0),
         ('CANT_SOLIC_SECUENCIALES_MAX',5);
 	
 SELECT * FROM param_parametros;
@@ -105,12 +106,13 @@ DECLARE
 	resultado INTEGER;
 BEGIN
 
-/*
-Debe retornar el numero de frame que se debe desalojar segun LRU, pero antes de cada solicitud se debe verificar
-si las ultimas N solicitudes fueron secuenciales (nros de pagina contiguos). Si hubo N secuenciales, debe retornar
-el numero de frame segun MRU, y poner en cero el contador de secuenciales. N es un porcentaje de la cantidad de 
-buffers en el pool (por ejemplo N=50%)
-*/
+	/*
+	Debe retornar el numero de frame que se debe desalojar segun LRU, pero antes de cada solicitud se debe verificar
+	si las ultimas N solicitudes fueron secuenciales (nros de pagina contiguos). Si hubo N secuenciales, debe retornar
+	el numero de frame segun MRU, y poner en cero el contador de secuenciales. N es un porcentaje de la cantidad de
+	buffers en el pool (por ejemplo N=50%)
+	*/
+
 	SELECT param_valor1
 	INTO nSecuencialMax
 	FROM param_parametros
@@ -126,7 +128,7 @@ buffers en el pool (por ejemplo N=50%)
 	FROM param_parametros
 	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES_MAX';
 
-	//TODO...
+	-- TODO...
 
 	SELECT *
 	INTO resultado
