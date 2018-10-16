@@ -20,6 +20,7 @@ CREATE TABLE bufferpool
 );
 
 -- Todos los frames del buffer estan libres al inicio
+TRUNCATE TABLE bufferpool;
 INSERT INTO bufferpool (nro_frame, free, dirty, nro_disk_page, last_touch)
 VALUES	(1,TRUE,FALSE,NULL,NULL),
         (2,TRUE,FALSE,NULL,NULL),
@@ -37,9 +38,29 @@ CREATE TABLE param_parametros
 INSERT INTO param_parametros (param_codigo, param_valor1)
 VALUES	('ULTIMO_NRO_PAGINA',null),
         ('CANT_SOLIC_SECUENCIALES',0),
-        ('CANT_SOLIC_SECUENCIALES_MAX',5);
+        ('CANT_SOLIC_SECUENCIALES_MAX',50);
 	
 SELECT * FROM param_parametros;
+
+
+----------------------------------------------------------------------------------------
+
+-- Función dummy que simula la escritura a disco de una pagina
+
+CREATE OR REPLACE FUNCTION write_pag_to_disk(nro_page INTEGER)
+	RETURNS VOID AS
+$BODY$
+DECLARE
+BEGIN
+
+	  RAISE NOTICE 'Se escribe en disco página (%)', nro_page;
+
+END;
+$BODY$
+  LANGUAGE plpgsql VOLATILE
+  COST 100;
+
+--select write_pag_to_disk(1);
 
 ----------------------------------------------------------------------------------------
 
@@ -102,7 +123,7 @@ $BODY$
 DECLARE
 	ultNroPaginaSolicitado INTEGER;
 	nSecuencial INTEGER;
-	nSecuencialMax INTEGER;
+	nPorcentajeMax INTEGER;
 	resultado INTEGER;
 BEGIN
 
@@ -114,7 +135,7 @@ BEGIN
 	*/
 
 	SELECT param_valor1
-	INTO nSecuencialMax
+	INTO ultNroPaginaSolicitado
 	FROM param_parametros
 	WHERE param_codigo = 'ULTIMO_NRO_PAGINA';
 
@@ -124,16 +145,40 @@ BEGIN
 	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES';
 
 	SELECT param_valor1
-	INTO nSecuencialMax
+	INTO nPorcentajeMax
 	FROM param_parametros
 	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES_MAX';
 
-	-- TODO...
+	IF(nSecuencial * 100 / (SELECT COUNT(*) FROM bufferpool) >= nPorcentajeMax)
+	THEN
 
-	SELECT *
-	INTO resultado
-	FROM pick_frame_LRU();	
-	
+		SELECT *
+		INTO resultado
+		FROM pick_frame_LRU();
+
+	ELSE
+
+		SELECT *
+		INTO resultado
+		FROM pick_frame_MRU();
+
+		UPDATE param_parametros
+		SET param_valor1 = 0
+		WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES';
+
+	END IF;
+
+	UPDATE param_parametros
+	SET param_valor1 = resultado
+	WHERE param_codigo = 'ULTIMO_NRO_PAGINA';
+
+	-- Chequeo si las ultimas fueron secuenciales
+	/*
+	UPDATE param_parametros
+	SET param_valor1 = nSecuencial + 1
+	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES';
+	*/
+
 	RETURN resultado;
 
 END;
@@ -148,53 +193,65 @@ CREATE OR REPLACE FUNCTION get_disk_page (nro_page INTEGER)
   RETURNS INTEGER AS
 $BODY$
 DECLARE
-  resultado INTEGER;
-  pFrame INTEGER;
+  vResultado INTEGER;
+	vEsDirty BOOLEAN;
   
 BEGIN
 
-	RAISE NOTICE 'Se invoca get_disk_page(%)', _nro_page;
+	RAISE NOTICE 'Se invoca get_disk_page(%)', nro_page;
 
-	IF EXISTS (SELECT FROM bufferpool WHERE nro_disk_page = nro_page) 
+	-- Chequeo si la página ya existe en el buffer
+	IF EXISTS (SELECT FROM bufferpool WHERE nro_disk_page = nro_page)
 	THEN
 	  SELECT nro_frame
-	  INTO resultado
+	  INTO vResultado
 	  FROM bufferpool
 	  WHERE nro_disk_page = nro_page;
 	  
-	  RAISE NOTICE 'Acceso a bufferpool. Frame %', resultado;
+	  RAISE NOTICE 'Acceso a bufferpool. Frame %', vResultado;
 	ELSE
 	
-	  -- Busco un frame libre
+	  -- Si no existe en el buffer, busco un frame libre
 	  SELECT nro_frame
-	  INTO resultado
+	  INTO vResultado
 	  FROM bufferpool 
 	  WHERE free = TRUE
 	  ORDER BY last_touch
 	  LIMIT 1;
 	  
-	  IF(resultado IS NULL)
+	  IF(vResultado IS NULL)
 	  THEN
-	    -- Si no hay frame libre, desalojo segun algoritmo
+	    -- Si no hay frame libre, busco cual desalojar segun algoritmo
 			SELECT *
-			INTO pFrame
-			FROM pick_frame_LRU();
+			INTO vResultado
+			FROM pick_frame_LRU(); -- TODO: Cambiar a otros algoritmos, segun se este probando
 
-	    -- Si dirty = true, hay que hacer un update en disco (write_pag_to_disk())
-	    -- antes de pisar el bloque 
-	    RAISE NOTICE 'Acceso a disco con reemplazo. Frame %', resultado;
+			SELECT dirty
+			INTO vEsDirty
+			FROM bufferpool
+			WHERE nro_frame = vResultado;
+
+			-- Si el frame esta dirty, hay que hacer un update en disco antes de pisar el bloque
+			IF (vEsDirty = TRUE)
+			THEN
+				SELECT write_pag_to_disk(nro_page);
+			END IF;
+
+	    RAISE NOTICE 'Acceso a disco con reemplazo. Frame %', vResultado;
 	  ELSE
-	    RAISE NOTICE 'Acceso a disco sin reemplazo. Frame %', resultado;
+	    RAISE NOTICE 'Acceso a disco sin reemplazo. Frame %', vResultado;
 	  END IF;
-	  
+
+		-- Actualizo buffer
 	  UPDATE bufferpool
-	  SET free = FALSE,
+	  SET nro_disk_page = nro_page,
+	    free = FALSE,
 	    last_touch = current_timestamp
-	  WHERE nro_frame = resultado;
+	  WHERE nro_frame = vResultado;
 	  
 	END IF;
 
-	RETURN resultado;
+	RETURN vResultado;
 
 	EXCEPTION
 	WHEN OTHERS THEN
@@ -210,3 +267,39 @@ $BODY$
 -- select get_disk_page(1);
 
 ----------------------------------------------------------------------------------------
+
+-- Traza más eficiente con pick_frame_139()
+
+select get_disk_page (1);
+select get_disk_page (2);
+select get_disk_page (3);
+select get_disk_page (4);
+select get_disk_page (5);
+select get_disk_page (6);
+select get_disk_page (2);
+select get_disk_page (5);
+
+select * from bufferpool order by nro_frame asc;
+
+-- Traza más eficiente con pick_frame_LRU()
+
+select get_disk_page (1);
+select get_disk_page (2);
+select get_disk_page (3);
+select get_disk_page (4);
+select get_disk_page (5);
+select get_disk_page (5);
+select get_disk_page (4);
+
+select * from bufferpool order by nro_frame asc;
+
+-- Traza más eficiente con pick_frame_LRU()
+
+select get_disk_page (1);
+select get_disk_page (2);
+select get_disk_page (3);
+select get_disk_page (5);
+select get_disk_page (6);
+select get_disk_page (1);
+
+select * from bufferpool order by nro_frame asc;
