@@ -121,42 +121,53 @@ CREATE OR REPLACE FUNCTION pick_frame_139()
 	RETURNS INT AS
 $BODY$
 DECLARE
-	ultNroPaginaSolicitado INTEGER;
-	nSecuencial INTEGER;
-	nPorcentajeMax INTEGER;
+	vSecuencial INTEGER;
+	vPorcentajeMax INTEGER;
+	vUltimaPagina INTEGER;
+	vRecCursorOrdenado RECORD;
 	resultado INTEGER;
+
 BEGIN
 
-	/*
-	Debe retornar el numero de frame que se debe desalojar segun LRU, pero antes de cada solicitud se debe verificar
-	si las ultimas N solicitudes fueron secuenciales (nros de pagina contiguos). Si hubo N secuenciales, debe retornar
-	el numero de frame segun MRU, y poner en cero el contador de secuenciales. N es un porcentaje de la cantidad de
-	buffers en el pool (por ejemplo N=50%)
-	*/
+	vSecuencial  := 0;
+
+   FOR vRecCursorOrdenado IN
+		 SELECT nro_disk_page
+			 FROM bufferpool
+			 ORDER BY last_touch DESC
+   LOOP
+      --RAISE NOTICE 'vUltimaPagina (%)', vUltimaPagina;
+		  --RAISE NOTICE 'vRecCursorOrdenado (%)', vRecCursorOrdenado.nro_disk_page;
+			--RAISE NOTICE 'nSecuencial (%)', vSecuencial ;
+
+		 	IF(vUltimaPagina IS NOT NULL) THEN
+				--TODO: Con el -1 se chequean secuencias del tipo 1,2,3,4. Chequear tambien secuencias del tipo 4,3,2,1
+				IF (vUltimaPagina - 1 = vRecCursorOrdenado.nro_disk_page) THEN
+					vSecuencial  := vSecuencial  + 1;
+				ELSE
+					EXIT;
+				END IF;
+			END IF;
+
+		 vUltimaPagina := vRecCursorOrdenado.nro_disk_page;
+
+   END LOOP;
 
 	SELECT param_valor1
-	INTO ultNroPaginaSolicitado
-	FROM param_parametros
-	WHERE param_codigo = 'ULTIMO_NRO_PAGINA';
-
-	SELECT param_valor1
-	INTO nSecuencial
-	FROM param_parametros
-	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES';
-
-	SELECT param_valor1
-	INTO nPorcentajeMax
+	INTO vPorcentajeMax
 	FROM param_parametros
 	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES_MAX';
 
-	IF(nSecuencial * 100 / (SELECT COUNT(*) FROM bufferpool) >= nPorcentajeMax)
+	IF(vSecuencial * 100 / (SELECT COUNT(*) FROM bufferpool) >= vPorcentajeMax)
 	THEN
+		RAISE NOTICE 'Uso LRU';
 
 		SELECT *
 		INTO resultado
 		FROM pick_frame_LRU();
 
 	ELSE
+		RAISE NOTICE 'Uso MRU';
 
 		SELECT *
 		INTO resultado
@@ -172,13 +183,6 @@ BEGIN
 	SET param_valor1 = resultado
 	WHERE param_codigo = 'ULTIMO_NRO_PAGINA';
 
-	-- Chequeo si las ultimas fueron secuenciales
-	/*
-	UPDATE param_parametros
-	SET param_valor1 = nSecuencial + 1
-	WHERE param_codigo = 'CANT_SOLIC_SECUENCIALES';
-	*/
-
 	RETURN resultado;
 
 END;
@@ -186,7 +190,7 @@ $BODY$
   LANGUAGE plpgsql VOLATILE
   COST 100;
 
--- select pick_frame_139();
+--select pick_frame_139();
 ----------------------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION get_disk_page (nro_page INTEGER)
@@ -224,7 +228,7 @@ BEGIN
 	    -- Si no hay frame libre, busco cual desalojar segun algoritmo
 			SELECT *
 			INTO vResultado
-			FROM pick_frame_LRU(); -- TODO: Cambiar a otros algoritmos, segun se este probando
+			FROM pick_frame_139(); -- TODO: Cambiar a otros algoritmos, segun se este probando
 
 			SELECT dirty
 			INTO vEsDirty
@@ -268,38 +272,54 @@ $BODY$
 
 ----------------------------------------------------------------------------------------
 
+-- Traza más eficiente con pick_frame_MRU()
+
+select get_disk_page (101);
+select get_disk_page (102);
+select get_disk_page (103);
+select get_disk_page (105);
+select get_disk_page (106);
+select get_disk_page (101);
+
+--LRU: 6 llamadas a disco
+--MRU: 5 llamadas a disco
+--139: 6 llamadas a disco
+
+select * from bufferpool order by nro_frame asc;
+
+-- Traza más eficiente con pick_frame_LRU()
+
+select get_disk_page (101);
+select get_disk_page (102);
+select get_disk_page (103);
+select get_disk_page (104);
+select get_disk_page (105);
+select get_disk_page (105);
+select get_disk_page (104);
+
+--LRU: 5 llamadas a disco
+--MRU: 6 llamadas a disco
+--139 5  llamadas a disco
+
+select * from bufferpool order by nro_frame asc;
+
 -- Traza más eficiente con pick_frame_139()
 
-select get_disk_page (1);
-select get_disk_page (2);
-select get_disk_page (3);
-select get_disk_page (4);
-select get_disk_page (5);
-select get_disk_page (6);
-select get_disk_page (2);
-select get_disk_page (5);
+select get_disk_page (100);
+select get_disk_page (101);
+select get_disk_page (102);
+select get_disk_page (103);
+select get_disk_page (101);
+select get_disk_page (102);
+select get_disk_page (105);
+select get_disk_page (102);
+select get_disk_page (103);
+select get_disk_page (106);
+select get_disk_page (102);
+
+--LRU: 6 llamadas a disco
+--MRU: 7 llamadas a disco
+--139: 6 llamadas a disco
 
 select * from bufferpool order by nro_frame asc;
 
--- Traza más eficiente con pick_frame_LRU()
-
-select get_disk_page (1);
-select get_disk_page (2);
-select get_disk_page (3);
-select get_disk_page (4);
-select get_disk_page (5);
-select get_disk_page (5);
-select get_disk_page (4);
-
-select * from bufferpool order by nro_frame asc;
-
--- Traza más eficiente con pick_frame_LRU()
-
-select get_disk_page (1);
-select get_disk_page (2);
-select get_disk_page (3);
-select get_disk_page (5);
-select get_disk_page (6);
-select get_disk_page (1);
-
-select * from bufferpool order by nro_frame asc;
